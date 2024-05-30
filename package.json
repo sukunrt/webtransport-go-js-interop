@@ -1,0 +1,10 @@
+{
+  "name": "go-webtransport-readable-never-ends",
+  "version": "1.0.0",
+  "description": "Bidirectional echo streams via webtransport-go never end",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  }
+}
