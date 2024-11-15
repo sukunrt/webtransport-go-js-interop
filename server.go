@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -32,7 +31,75 @@ func main() {
 
 	// print the certhash
 	certHash := b64.StdEncoding.EncodeToString(hash[:])
-	fmt.Println(certHash)
+	fmt.Printf(
+		`(async function main() {
+    console.info("create session");
+    const transport = new WebTransport("https://127.0.0.1:12345/say-hello", {
+      serverCertificateHashes: [{
+        algorithm: "sha-256",
+        value: Uint8Array.from(atob("%s"), (m) => m.codePointAt(0))
+      }]
+    });
+
+    console.info("wait for session");
+    await transport.ready;
+    console.info("session ready");
+
+    const bds = transport.incomingBidirectionalStreams;
+    const incomingStreamsReader = bds.getReader();
+
+    // inbound loop
+    (async () => {
+      while (true) {
+        const { done, value } = await incomingStreamsReader.read();
+        if (done) {
+          console.log("Connection lost");
+          break;
+        }
+        console.info("received inbound stream");
+
+        const reader = value.readable.getReader();
+        try {
+          const { value, done } = await reader.read();
+          if (!done) {
+            console.log("read from stream", value);
+          }
+        } catch (err) {
+          console.info("error reading from stream", err);
+        }
+
+        console.log("close inbound stream");
+        reader.cancel()
+        value.writable.close();
+      }
+    })();
+
+    // outbound loop
+    (async () => {
+      while (true) {
+        console.info("create outbound stream");
+        const stream = await transport.createBidirectionalStream();
+        const writer = stream.writable.getWriter();
+        await writer.ready;
+
+        console.log("write to stream");
+        try {
+          const data = new Uint8Array([10, 10, 10]);
+          writer.write(data);
+          await writer.ready;
+        } catch (err) {
+          console.info("error writing to stream", err);
+        }
+
+        console.log("close outbound stream");
+        stream.readable.cancel();
+        writer.close()
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    })();
+  })();`, certHash)
+	fmt.Println()
 
 	wmux := http.NewServeMux()
 	s := webtransport.Server{
@@ -46,35 +113,58 @@ func main() {
 	defer s.Close()
 
 	wmux.HandleFunc("/say-hello", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("SERVER incoming session")
+		log.Println("incoming session")
 
 		conn, err := s.Upgrade(w, r)
 		if err != nil {
-			log.Printf("SERVER upgrading failed: %s", err)
+			log.Println("upgrading failed", err)
 			w.WriteHeader(500)
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+		// inbound loop
+		go func() {
+			for {
+				stream, err := conn.AcceptStream(conn.Context())
+				if err != nil {
+					log.Println("failed to accept stream", err)
+				}
+				log.Println("received inbound stream")
 
-		log.Printf("SERVER wait for stream")
-		stream, err := conn.AcceptStream(ctx)
-		if err != nil {
-			log.Fatalf("SERVER failed to accept bidirectional stream: %v", err)
-		}
+				buf := make([]byte, 15)
+				read, err := stream.Read(buf)
+				if err != nil {
+					log.Println("error reading from stream", err)
+				}
 
-		defer stream.Close()
+				log.Println("read from stream", buf[:read])
 
-		log.Printf("SERVER says hello")
-
-		for i := 0; i < 256; i++ {
-			if _, err = stream.Write(make([]byte, 1024 * 1024)); err != nil {
-				log.Fatal(err)
+				log.Println("close inbound stream")
+				stream.Close()
 			}
-		}
+		}()
 
-		log.Printf("SERVER stream finished")
+		// outbound loop
+		go func() {
+			for {
+				log.Println("create outbound stream")
+				stream, err := conn.OpenStream()
+				if err != nil {
+					log.Println("failed to create stream", err)
+				}
+
+				log.Println("write to stream")
+				n, err := stream.Write([]byte{10, 10, 10})
+				if err != nil || n != 3 {
+					log.Println("error writing to stream", err, n)
+				}
+
+				log.Println("close outbound stream")
+				stream.Close()
+
+				time.Sleep(time.Second)
+			}
+		}()
 	})
 
 	if err := s.ListenAndServe(); err != nil {
