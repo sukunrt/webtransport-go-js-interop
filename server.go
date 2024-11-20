@@ -17,7 +17,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
+	"github.com/quic-go/quic-go/qlog"
 
 	"github.com/quic-go/webtransport-go"
 )
@@ -107,6 +109,9 @@ func main() {
 			TLSConfig: tlsConf,
 			Addr:      "localhost:12345",
 			Handler:   wmux,
+			QUICConfig: &quic.Config{
+				Tracer: qlog.DefaultConnectionTracer,
+			},
 		},
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}

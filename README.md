@@ -9,6 +9,6 @@ Both js creates new session with go server. Both js and go loops receiving and o
 
 ```bash
 go get
-go run server.go
+QLOGDIR=. go run server.go
 # copy printed js code to the browser console or sth like https://codepen.io/pen/?editors=0012
 ```
